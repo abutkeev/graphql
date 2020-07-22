@@ -153,19 +153,33 @@ func (c *Client) runWithJSON(ctx context.Context, req *Request, resp interface{}
 func (c *Client) runWithPostFields(ctx context.Context, req *Request, resp interface{}) error {
 	var requestBody bytes.Buffer
 	writer := multipart.NewWriter(&requestBody)
-	if err := writer.WriteField("query", req.q); err != nil {
-		return errors.Wrap(err, "write query field")
+	mapData := make(map[string][]string)
+	for i := range req.files {
+		field := req.files[i].Field
+		req.vars[field] = nil
+		mapData[field] = []string{"variables." + field}
 	}
-	var variablesBuf bytes.Buffer
-	if len(req.vars) > 0 {
-		variablesField, err := writer.CreateFormField("variables")
-		if err != nil {
-			return errors.Wrap(err, "create variables field")
-		}
-		if err := json.NewEncoder(io.MultiWriter(variablesField, &variablesBuf)).Encode(req.vars); err != nil {
-			return errors.Wrap(err, "encode variables")
-		}
+	operationsField, err := writer.CreateFormField("operations")
+	if err != nil {
+		return errors.Wrap(err, "create operations field")
 	}
+	operations := map[string]interface{}{
+		"query":     req.q,
+		"variables": req.vars,
+	}
+	var operationsBuf bytes.Buffer
+	if err = json.NewEncoder(io.MultiWriter(operationsField, &operationsBuf)).Encode(operations); err != nil {
+		return errors.Wrap(err, "encode operations")
+	}
+	mapField, err := writer.CreateFormField("map")
+	if err != nil {
+		return errors.Wrap(err, "create map field")
+	}
+	var mapBuf bytes.Buffer
+	if err = json.NewEncoder(io.MultiWriter(mapField, &mapBuf)).Encode(mapData); err != nil {
+		return errors.Wrap(err, "encode map")
+	}
+
 	for i := range req.files {
 		part, err := writer.CreateFormFile(req.files[i].Field, req.files[i].Name)
 		if err != nil {
@@ -178,9 +192,9 @@ func (c *Client) runWithPostFields(ctx context.Context, req *Request, resp inter
 	if err := writer.Close(); err != nil {
 		return errors.Wrap(err, "close writer")
 	}
-	c.logf(">> variables: %s", variablesBuf.String())
+	c.logf(">> operations: %s", operationsBuf.String())
+	c.logf(">> map: %s", mapBuf.String())
 	c.logf(">> files: %d", len(req.files))
-	c.logf(">> query: %s", req.q)
 	gr := &graphResponse{
 		Data: resp,
 	}
